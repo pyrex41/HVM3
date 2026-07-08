@@ -34,12 +34,12 @@ Term reduce(Term term) {
       case DP1: {
         Term sub = got(loc + 0);
         if (term_get_bit(sub) == 0) { spush(next, sbuf, &spos); next = sub; continue; }
-        next = term_rem_bit(sub); continue;
+        next = term_rem_bit(sub); free_node(loc, 1); continue; // sub cell consumed
       }
       case VAR: {
         Term sub = got(loc);
         if (term_get_bit(sub) == 0) break;
-        next = term_rem_bit(sub); continue;
+        next = term_rem_bit(sub); free_node(loc, 1); continue; // sub cell consumed
       }
       case REF: { *HVM.spos = spos; next = reduce_ref(next); spos = *HVM.spos; continue; }
       default: break;

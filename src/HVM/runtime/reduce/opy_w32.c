@@ -9,6 +9,7 @@ Term reduce_opy_w32(Term opy, Term w32) {
   Tag t = term_tag(w32);
   u32 x = term_loc(got(opy_loc + 1));
   u32 y = term_loc(w32);
+  free_node(opy_loc, 2); // OPY node dead; result is an immediate
   u32 result;
   switch (term_lab(opy)) {
     case OP_ADD: result = x + y; break;

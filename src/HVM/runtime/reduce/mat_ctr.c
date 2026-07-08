@@ -21,6 +21,8 @@ Term reduce_mat_ctr(Term mat, Term ctr) {
         set(new_app + 1, got(ctr_loc + i));
         app = term_new(APP, 0, new_app);
       }
+      free_node(mat_loc, 3);       // IFL node dead (else-arm subtree leaked)
+      free_node(ctr_loc, ctr_ari); // CTR fields copied out
       return app;
     } else {
       Term app = got(mat_loc + 2);
@@ -28,6 +30,7 @@ Term reduce_mat_ctr(Term mat, Term ctr) {
       set(new_app + 0, app);
       set(new_app + 1, ctr);
       app = term_new(APP, 0, new_app);
+      free_node(mat_loc + 2, 1); // mat_loc+0..1 reused as APP; +2 dead
       return app;
     }
   // Match
@@ -52,6 +55,8 @@ Term reduce_mat_ctr(Term mat, Term ctr) {
       set(new_app + 1, got(ctr_loc + i));
       app = term_new(APP, 0, new_app);
     }
+    free_node(mat_loc, 1 + clen); // MAT node dead (unselected arms leaked)
+    free_node(ctr_loc, ctr_ari);  // CTR fields copied out
     return app;
   }
 }

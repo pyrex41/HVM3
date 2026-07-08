@@ -19,6 +19,7 @@ Term reduce_dup_sup(Term dup, Term sup) {
   if (dup_lab == sup_lab) {
     Term tm0 = got(sup_loc + 0);
     Term tm1 = got(sup_loc + 1);
+    free_node(sup_loc, 2); // SUP node dead on label match
     if (term_tag(dup) == DP0) {
       sub(dup_loc + 0, tm1);
       return tm0;

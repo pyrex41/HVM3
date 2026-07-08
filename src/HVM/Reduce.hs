@@ -137,6 +137,7 @@ reduceAt debug book host = do
             _   -> set (loc + 0) val >> return term
         else do
           set host (termRemBit sb0)
+          freeNode (loc + 0) 1 -- sub cell consumed by its last occurrence
           reduceAt debug book host
 
     t | t == _DP1_ -> do
@@ -156,6 +157,7 @@ reduceAt debug book host = do
             _   -> set (loc + 0) val >> return term
         else do
           set host (termRemBit sb1)
+          freeNode (loc + 0) 1 -- sub cell consumed by its last occurrence
           reduceAt debug book host
 
     t | t == _VAR_ -> do
@@ -164,6 +166,7 @@ reduceAt debug book host = do
         then return term
         else do
           set host (termRemBit sub)
+          freeNode (loc + 0) 1 -- sub cell consumed by its VAR occurrence
           reduceAt debug book host
 
     t | t == _REF_ -> do
@@ -206,7 +209,11 @@ reduceRefAt book host = do
             if strict
               then reduceAt False book (loc + i)
               else return term
-        doInjectCoreAt book core host $ zip (map snd args) argTerms
+        ret <- doInjectCoreAt book core host $ zip (map snd args) argTerms
+        -- The REF arg block is dead once the body is injected (interpreted
+        -- path only; compiled fast-mode statically reuses this block itself).
+        when (ari > 0) $ freeNode loc (fromIntegral ari)
+        return ret
       Nothing -> do
         putStrLn $ "RUNTIME_ERROR: Function ID " ++ show fid ++ " not found in fidToFun book."
         exitFailure

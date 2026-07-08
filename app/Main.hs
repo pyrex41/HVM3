@@ -12,7 +12,7 @@ import HVM.Foreign
 import HVM.Parse
 import HVM.Reduce
 import HVM.Type
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv)
 import System.Exit (exitWith, ExitCode(ExitSuccess, ExitFailure))
 import System.IO
 import Text.Printf
@@ -82,6 +82,7 @@ cliRun filePath debug compiled mode showStats hideQuotes strArgs = do
   code <- readFile' filePath
   book <- doParseBook filePath code
   hvmInit
+  enableReuse compiled
   initBook filePath book compiled
   checkHasMain book
   args <- doParseArguments book strArgs
@@ -106,6 +107,11 @@ cliRun filePath debug compiled mode showStats hideQuotes strArgs = do
   hvmFree
   when showStats $ do
     print stats
+  reuseStatsEnv <- lookupEnv "HVM_REUSE_STATS"
+  when (reuseStatsEnv == Just "1") $ do
+    frees  <- getFrees
+    reuses <- getReuses
+    hPutStrLn stderr $ "FREE: " ++ show frees ++ " cells\nREUSE: " ++ show reuses ++ " cells"
   return $ Right ()
 
 cliServe :: FilePath -> Bool -> Bool -> RunMode -> Bool -> Bool -> IO (Either String ())
@@ -113,6 +119,7 @@ cliServe filePath debug compiled mode showStats hideQuotes = do
   code <- readFile' filePath
   book <- doParseBook filePath code
   hvmInit
+  enableReuse compiled
   initBook filePath book compiled
   checkHasMain book
   putStrLn "HVM serve mode. Listening on port 8080."
@@ -154,6 +161,15 @@ cliServe filePath debug compiled mode showStats hideQuotes = do
             hPutStrLn stderr $ "Connection error: " ++ show (e :: SomeException)
             serverLoop sock book
         Right _ -> serverLoop sock book
+
+-- Node reuse (freelist): interpreted mode only. Compiled mode keeps stock
+-- behavior (fast-mode codegen already reuses blocks statically, and the .so
+-- carries its own runtime state where reuse is never enabled). HVM_REUSE=0
+-- disables reuse entirely, for A/B debugging.
+enableReuse :: Bool -> IO ()
+enableReuse compiled = do
+  reuseEnv <- lookupEnv "HVM_REUSE"
+  when (not compiled && reuseEnv /= Just "0") $ hvmSetReuse 1
 
 removeQuotes :: String -> String
 removeQuotes s = case s of
