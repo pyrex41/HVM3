@@ -19,6 +19,10 @@
 // Interaction rules, grouped by tag
 #include "runtime/reduce/let.c"
 
+// REF
+#include "runtime/reduce/ref.c"
+#include "runtime/reduce/ref_sup.c"
+
 // APP
 #include "runtime/reduce/app_era.c"
 #include "runtime/reduce/app_lam.c"
