@@ -135,10 +135,14 @@ void inc_itr();
 
 // Node reuse (freelist)
 void hvm_set_reuse(u64 on);
+bool reuse_enabled();
 void reuse_reset();
 void free_node(Loc loc, Loc arity);
+void collect(Term term);
+void collect_at(Loc loc);
 u64  get_frees();
 u64  get_reuses();
+void reuse_dump();
 
 // Stack
 void spush(Term term, Term* sbuf, u64* spos);

@@ -128,7 +128,7 @@ injectCore book (Dec val) loc = do
 doInjectCoreAt :: Book -> Core -> Loc -> [(String,Term)] -> HVM Term
 doInjectCoreAt book core host argList = do
   (_, state) <- runStateT (injectCore book core host) (emptyState { args = MS.fromList argList })
-  foldM (\m (name, loc) -> do
+  leftover <- foldM (\m (name, loc) -> do
     case MS.lookup name (args state) of
       Just term -> do
         set loc term
@@ -137,4 +137,7 @@ doInjectCoreAt book core host argList = do
         error $ "Unbound variable: \n\x1b[2m" ++ name ++ "\n\x1b[0mIn term:\n\x1b[2m" ++ Data.List.take 1024 (showCore core) ++ "...\x1b[0m")
     (args state)
     (vars state)
+  -- Never-used binder occurrences and dropped REF args: collect their
+  -- subtrees (no-op unless node reuse is enabled).
+  forM_ (MS.elems leftover) collectTerm
   got host

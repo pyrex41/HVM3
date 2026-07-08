@@ -5,6 +5,7 @@
 // *
 Term reduce_app_era(Term app, Term era) {
   inc_itr();
-  free_node(term_loc(app), 2); // APP node dead (arg subtree is leaked)
+  collect_at(term_loc(app) + 1); // dropped arg subtree
+  free_node(term_loc(app), 2);   // APP node dead
   return era;
 }

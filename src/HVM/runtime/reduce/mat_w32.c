@@ -12,14 +12,27 @@ Term reduce_mat_w32(Term mat, Term w32) {
   u64 w32_val = term_loc(w32);
   if (w32_val < mat_len - 1) {
     Term arm = got(mat_loc + 1 + w32_val);
-    free_node(mat_loc, 1 + mat_len); // SWI node dead (other arms leaked)
+    for (u64 i = 1; i <= mat_len; i++) {
+      if (i != 1 + w32_val) collect_at(mat_loc + i); // dropped arms
+    }
+    free_node(mat_loc, 1 + mat_len); // SWI node dead
     return arm;
   } else {
     Term fn = got(mat_loc + mat_len);
-    Loc app = mat_loc;
+    for (u64 i = 1; i < mat_len; i++) collect_at(mat_loc + i); // dropped numeric arms
+    Loc app;
+    if (reuse_enabled()) {
+      // Place the APP in a fresh (recycled) 2-node and free the whole SWI
+      // block, so full-size blocks flow back to the next SWI allocation
+      // instead of being torn into stranded size classes. Alloc first:
+      // freeing first would let this 2-alloc split the just-freed block.
+      app = alloc_node(2);
+      free_node(mat_loc, 1 + mat_len);
+    } else {
+      app = mat_loc; // stock path: reuse the SWI node in place
+    }
     set(app + 0, fn);
     set(app + 1, term_new(W32, 0, w32_val - (mat_len - 1)));
-    if (mat_len > 1) free_node(mat_loc + 2, mat_len - 1); // +0..1 reused as APP
     return term_new(APP, 0, app);
   }
 }

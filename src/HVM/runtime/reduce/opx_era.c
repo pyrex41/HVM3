@@ -5,6 +5,7 @@
 // *
 Term reduce_opx_era(Term opx, Term era) {
   inc_itr();
-  free_node(term_loc(opx), 2); // OPX node dead (other operand leaked)
+  collect_at(term_loc(opx) + 1); // dropped second operand
+  free_node(term_loc(opx), 2);   // OPX node dead
   return era;
 }

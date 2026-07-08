@@ -112,6 +112,7 @@ cliRun filePath debug compiled mode showStats hideQuotes strArgs = do
     frees  <- getFrees
     reuses <- getReuses
     hPutStrLn stderr $ "FREE: " ++ show frees ++ " cells\nREUSE: " ++ show reuses ++ " cells"
+    reuseDump
   return $ Right ()
 
 cliServe :: FilePath -> Bool -> Bool -> RunMode -> Bool -> Bool -> IO (Either String ())
