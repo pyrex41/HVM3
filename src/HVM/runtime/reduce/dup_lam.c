@@ -14,11 +14,13 @@ Term reduce_dup_lam(Term dup, Term lam) {
 
   Term bod    = got(lam_loc + 0);
   
-  Loc loc     = alloc_node(5);
-  Loc lm0     = loc + 0;
-  Loc lm1     = loc + 1;
-  Loc su0     = loc + 2;
-  Loc du0     = loc + 4;
+  // Separate extents so free-site size classes match (see dup_ctr.c):
+  // lm0/lm1/du0 die as 1-cell frees (sub-cell deref), su0 as a SUP(2)
+  // free in dup_sup. Bump layout unchanged (loc+0,+1,+2..3,+4).
+  Loc lm0     = alloc_node(1);
+  Loc lm1     = alloc_node(1);
+  Loc su0     = alloc_node(2);
+  Loc du0     = alloc_node(1);
 
   sub(lam_loc + 0, term_new(SUP, dup_lab, su0));
 

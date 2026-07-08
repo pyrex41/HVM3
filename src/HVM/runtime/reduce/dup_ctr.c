@@ -16,11 +16,18 @@ Term reduce_dup_ctr(Term dup, Term ctr) {
   Lab ctr_lab = term_lab(ctr);
   u64 ctr_ari = HVM.cari[ctr_lab];
 
-  Loc loc     = alloc_node(ctr_ari * 2);
+  // Allocated as separate extents (ctr block + one cell per dup node) so
+  // that, under reuse, each piece is requested at the size class it will
+  // later be freed at: ctr1 dies as a CTR(ctr_ari) free in mat_ctr, each
+  // dup cell dies as a 1-cell free at DP deref. A fused 2*ctr_ari extent
+  // can never be re-formed from those fragments (no coalescing), which
+  // made every dup of a 2-field ctor bump fresh heap forever. Under pure
+  // bump (reuse off) consecutive allocs are contiguous, so the layout is
+  // identical to the original fused alloc_node(ctr_ari * 2).
+  Loc ctr1    = alloc_node(ctr_ari);
   Loc ctr0    = ctr_loc;
-  Loc ctr1    = loc + 0;
   for (u64 i = 0; i < ctr_ari; i++) {
-    Loc du0 = loc + ctr_ari + i;
+    Loc du0 = alloc_node(1);
     set(du0 + 0, got(ctr_loc + i));
     set(ctr0 + i, term_new(DP0, dup_lab, du0));
     set(ctr1 + i, term_new(DP1, dup_lab, du0));

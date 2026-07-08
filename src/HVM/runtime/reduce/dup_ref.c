@@ -16,11 +16,13 @@ Term reduce_dup_ref(Term dup, Term ref) {
   Lab ref_lab = term_lab(ref);
   u64 ref_ari = HVM.fari[ref_lab];
 
-  Loc loc     = alloc_node(ref_ari * 2);
+  // Separate extents so free-site size classes match (see dup_ctr.c):
+  // ref1 dies as an fari-block free in reduceRefAt, dup cells as 1-cell
+  // frees at DP deref. Bump layout unchanged.
+  Loc ref1    = alloc_node(ref_ari);
   Loc ref0    = ref_loc;
-  Loc ref1    = loc + 0;
   for (u64 i = 0; i < ref_ari; i++) {
-    Loc du0 = loc + ref_ari + i;
+    Loc du0 = alloc_node(1);
     set(du0 + 0, got(ref_loc + i));
     set(ref0 + i, term_new(DP0, dup_lab, du0));
     set(ref1 + i, term_new(DP1, dup_lab, du0));

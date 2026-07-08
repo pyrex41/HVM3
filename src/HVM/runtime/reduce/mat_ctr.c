@@ -14,9 +14,11 @@ Term reduce_mat_ctr(Term mat, Term ctr) {
     u64 ctr_ari = HVM.cari[ctr_num];
     if (mat_ctr == ctr_num) {
       Term app = got(mat_loc + 1);
-      Loc loc = alloc_node(ctr_ari * 2);
+      // One extent per APP node: each dies as an APP(2) free in app_lam,
+      // so a fused 2*ctr_ari extent would fragment irrecoverably (see
+      // dup_ctr.c). Bump layout is unchanged (consecutive allocs).
       for (u64 i = 0; i < ctr_ari; i++) {
-        Loc new_app = loc + i * 2;
+        Loc new_app = alloc_node(2);
         set(new_app + 0, app);
         set(new_app + 1, got(ctr_loc + i));
         app = term_new(APP, 0, new_app);
@@ -55,9 +57,9 @@ Term reduce_mat_ctr(Term mat, Term ctr) {
     }
     u64 cse_idx = ctr_num - mat_ctr;
     Term app = got(mat_loc + 1 + cse_idx);
-    Loc loc = alloc_node(ctr_ari * 2);
+    // One extent per APP node (see IFL path above / dup_ctr.c).
     for (u64 i = 0; i < ctr_ari; i++) {
-      Loc new_app = loc + i * 2;
+      Loc new_app = alloc_node(2);
       set(new_app + 0, app);
       set(new_app + 1, got(ctr_loc + i));
       app = term_new(APP, 0, new_app);
