@@ -21,6 +21,18 @@ foreign import ccall unsafe "Runtime.c hvm_free"
 foreign import ccall unsafe "Runtime.c alloc_node"
   allocNode :: Loc -> IO Loc
 
+foreign import ccall unsafe "Runtime.c free_node"
+  freeNode :: Loc -> Loc -> IO ()
+
+foreign import ccall unsafe "Runtime.c hvm_set_reuse"
+  hvmSetReuse :: Word64 -> IO ()
+
+foreign import ccall unsafe "Runtime.c get_frees"
+  getFrees :: IO Word64
+
+foreign import ccall unsafe "Runtime.c get_reuses"
+  getReuses :: IO Word64
+
 foreign import ccall unsafe "Runtime.c set"
   set :: Loc -> Term -> IO ()
 

@@ -133,6 +133,13 @@ Term take(Loc loc);
 Loc  alloc_node(Loc arity);
 void inc_itr();
 
+// Node reuse (freelist)
+void hvm_set_reuse(u64 on);
+void reuse_reset();
+void free_node(Loc loc, Loc arity);
+u64  get_frees();
+u64  get_reuses();
+
 // Stack
 void spush(Term term, Term* sbuf, u64* spos);
 Term spop(Term* sbuf, u64* spos);

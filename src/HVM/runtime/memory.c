@@ -33,6 +33,7 @@ void hvm_init() {
   }
   #undef CHECK_ALLOC
 
+  reuse_reset();
   *HVM.spos = 0;
   *HVM.size = 1;
   *HVM.itrs = 0;
