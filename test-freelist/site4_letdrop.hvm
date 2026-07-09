@@ -1,0 +1,7 @@
+data L { #Nil #Cons{h t} }
+@f(n) = !unused = #Cons{1 2}; n
+@loop(i acc) = ~i !acc {
+  0: acc
+  1+p: @loop(p @f(acc))
+}
+@main = @loop(100000 0)

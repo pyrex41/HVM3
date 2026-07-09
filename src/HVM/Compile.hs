@@ -627,9 +627,21 @@ compileFastBody book fid term@(Dup lab dp0 dp1 val bod) ctx stop itr = do
 
 compileFastBody book fid term@(Let mode var val bod) ctx stop itr = do
   valT <- compileFastCore book fid val
+  -- S4: a let binding used ZERO times names a dropped subtree the let
+  -- uniquely allocated; collect it. Restrict LAZY to allocating value shapes
+  -- (never a bare Var/atom -- collecting an alias/atom corrupts). STRI values
+  -- are reduced C variables (clean, no re-eval).
+  let allocating = case val of
+        Ctr{} -> True
+        App{} -> True
+        Op2{} -> True
+        Ref{} -> True
+        Sup{} -> True
+        _     -> False
   case mode of
     LAZY -> do
       bind var valT
+      when (coreCount var bod == 0 && allocating) $ emit $ "collect(" ++ valT ++ ");"
     STRI -> do
       case val of
         t@(Ref _ rFid _) -> do
@@ -637,10 +649,12 @@ compileFastBody book fid term@(Let mode var val bod) ctx stop itr = do
           valNam <- fresh "val"
           emit $ "Term " ++ valNam ++ " = reduce(" ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ "));"
           bind var valNam
+          when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
         _ -> do
-          valNam <- fresh "val" 
+          valNam <- fresh "val"
           emit $ "Term " ++ valNam ++ " = reduce(" ++ valT ++ ");"
           bind var valNam
+          when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
   compileFastBody book fid bod ctx stop itr
 
 compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
