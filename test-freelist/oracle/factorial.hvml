@@ -1,0 +1,5 @@
+@fact(n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{a b}=p @fact(a (* (+ b 1) acc))
+}
+@main = @fact(10 1)

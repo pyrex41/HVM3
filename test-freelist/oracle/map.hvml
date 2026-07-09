@@ -1,0 +1,5 @@
+data List { #Nil #Cons{head tail} }
+@range(n xs) = ~n !xs { 0: xs 1+p: !&0{a b}=p @range(a #Cons{(+ b 1) xs}) }
+@mapinc(xs) = ~xs { #Nil: #Nil #Cons{h t}: #Cons{(+ h 1) @mapinc(t)} }
+@sum(xs r) = ~xs !r { #Nil: r #Cons{h t}: @sum(t (+ h r)) }
+@main = @sum(@mapinc(@range(5 #Nil)) 0)

@@ -1,0 +1,4 @@
+! a = 3628800
+a
+WORK: 94 interactions
+SIZE: 3 nodes

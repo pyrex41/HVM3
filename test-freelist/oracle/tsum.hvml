@@ -1,0 +1,4 @@
+data Tree { #Leaf{val} #Node{left right} }
+@build(n) = ~n { 0: #Leaf{1} 1+p: !&0{a b}=p #Node{@build(a) @build(b)} }
+@tsum(t) = ~t { #Leaf{v}: v #Node{l r}: (+ @tsum(l) @tsum(r)) }
+@main = @tsum(@build(8))

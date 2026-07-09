@@ -604,6 +604,7 @@ compileFastBody book fid term@(Dup lab dp0 dp1 val bod) ctx stop itr = do
   emit $ "itrs += 1;"
   emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
   emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
+  emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
   tabDec
   emit $ "} else {"
   tabInc
@@ -678,6 +679,7 @@ compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
     emit $ "itrs += 1;"
     emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
     emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
+    emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
     tabDec
     emit $ "} else {"
     tabInc
@@ -870,6 +872,7 @@ compileFastCore book fid (Dup lab dp0 dp1 val bod) = do
   emit $ "itrs += 1;"
   emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
   emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
+  emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
   tabDec
   emit $ "} else {"
   tabInc

@@ -1,0 +1,5 @@
+@loop(n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{a b}=&0{0 0} @loop(p (+ acc (+ a b)))
+}
+@main = @loop(100000 0)
