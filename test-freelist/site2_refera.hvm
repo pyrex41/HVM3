@@ -1,0 +1,7 @@
+!@F(!x y) = y
+@sink(!e acc) = acc
+@loop(i acc) = ~i !acc {
+  0: acc
+  1+p: @loop(p @sink(@F(* &0{0 0}) acc))
+}
+@main = @loop(100000 0)

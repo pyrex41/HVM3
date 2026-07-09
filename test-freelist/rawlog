@@ -1,16 +1,23 @@
 ! a = 3628800
 a
 WORK: 94 interactions
-TIME: 0.0000350 seconds
+TIME: 0.0000420 seconds
 SIZE: 3 nodes
-PERF: 2.686 MIPS
+PERF: 2.238 MIPS
 
 ! a = 3628800
 a
 WORK: 94 interactions
-TIME: 0.0000310 seconds
+TIME: 0.0000350 seconds
 SIZE: 3 nodes
-PERF: 3.032 MIPS
+PERF: 2.686 MIPS
+
+! a = 20
+a
+WORK: 109 interactions
+TIME: 0.0000640 seconds
+SIZE: 16 nodes
+PERF: 1.703 MIPS
 
 ! a = 20
 a
@@ -19,52 +26,45 @@ TIME: 0.0000280 seconds
 SIZE: 16 nodes
 PERF: 3.893 MIPS
 
-! a = 20
-a
-WORK: 109 interactions
-TIME: 0.0000310 seconds
-SIZE: 16 nodes
-PERF: 3.516 MIPS
-
 ! a = &3{6 120}
 a
 WORK: 137 interactions
-TIME: 0.0000340 seconds
+TIME: 0.0000360 seconds
 SIZE: 253 nodes
-PERF: 4.029 MIPS
+PERF: 3.806 MIPS
 
 ! a = &3{6 120}
 a
 WORK: 137 interactions
-TIME: 0.0000380 seconds
+TIME: 0.0000420 seconds
 SIZE: 248 nodes
-PERF: 3.605 MIPS
+PERF: 3.262 MIPS
+
+! a = 256
+a
+WORK: 3831 interactions
+TIME: 0.0000450 seconds
+SIZE: 1533 nodes
+PERF: 85.133 MIPS
 
 ! a = 256
 a
 WORK: 3831 interactions
 TIME: 0.0000490 seconds
-SIZE: 1533 nodes
+SIZE: 1032 nodes
 PERF: 78.184 MIPS
 
-! a = 256
-a
-WORK: 3831 interactions
-TIME: 0.0000370 seconds
-SIZE: 1032 nodes
-PERF: 103.541 MIPS
-
 ! a = 495000000
 a
 WORK: 121200004 interactions
-TIME: 0.0631370 seconds
+TIME: 0.0505910 seconds
 SIZE: 20600003 nodes
-PERF: 1919.635 MIPS
+PERF: 2395.683 MIPS
 
 ! a = 495000000
 a
 WORK: 121200004 interactions
-TIME: 0.0564970 seconds
+TIME: 0.0727810 seconds
 SIZE: 600201 nodes
-PERF: 2145.247 MIPS
+PERF: 1665.270 MIPS
 

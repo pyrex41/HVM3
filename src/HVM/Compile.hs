@@ -358,6 +358,7 @@ compileFast book fid core copy args = do
         Just labs -> do
           emit $ "if (term_tag(" ++ argNam ++ ") == ERA) {"
           emit $ "  itrs += 1;"
+          emit $ "  collect(ref);"
           emit $ "  *HVM.itrs += itrs;"
           emit $ "  return term_new(ERA, 0, 0);"
           emit $ "}"
