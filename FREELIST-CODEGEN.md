@@ -117,6 +117,34 @@ interpreted `reduce/*.c` already handle (`dup_ctr`, `mat_ctr`, `*_era`, dup
 paths). Validate on tiny programs that drop subtrees, then re-test kernel boot
 on a machine with clean swap.
 
+## S2 status (2026-07-09): implemented, but kernel still balloons
+
+S2 = collect zero-use CTR-mat fields (the `kl.aset`-replaces-value case) is
+**done, correct, committed** (`a0ced28`; oracle byte-identical, churn
+unchanged). But it did **not** crack kernel boot `-c`: guard-killed at
+~16.5 GB swap (S1 alone: ~14.5 GB; stock: 43 GB) — only marginally better.
+
+**Conclusion: zero-use mat fields are NOT the kernel's dominant garbage.**
+The remaining balloon is the long tail of death sites S1/S2 don't touch. Prime
+suspect (from the earlier diagnosis, docs/suite-aot-perf-plan.md §4.2): the
+**world is DUP'd on every global read / dynamic call**, and those dropped DUP
+copies are never collected — `dup_*` interactions are a death site the
+interpreted `reduce/*.c` handle but the codegen does not. Also erasure of
+non-mat intermediates.
+
+**This is now a systematic sweep, not a spot fix:** the interpreted reducer
+frees at EVERY death site; compiled mode must mirror them all to bound an
+arbitrary program. Do it profile-first — instrument per-site free/collect
+counts (or a per-tag allocation breakdown) on a *smaller* kernel-ish workload
+to find which site dominates the ~5 GB/run growth, then cover that site, then
+re-measure. Blind coverage of all sites is a lot of surface for
+corruption-risk (each wrong free = `GOT 0`).
+
+**Machine note:** each kernel `-c` run grows swap ~5 GB and it does not drain;
+after several runs this session swap sat at ~16 GB used. Do the sweep's
+kernel validations on a **freshly rebooted** machine, and keep them rare —
+lean on tiny/medium profiling programs for the iteration loop.
+
 ## S2 resume checklist (do after a reboot / clean swap)
 
 The scratchpad worktree and built binary are ephemeral (`/private/tmp`), but
