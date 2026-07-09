@@ -15,6 +15,8 @@ Term reduce_dup_ctr(Term dup, Term ctr) {
   Loc ctr_loc = term_loc(ctr);
   Lab ctr_lab = term_lab(ctr);
   u64 ctr_ari = HVM.cari[ctr_lab];
+  extern u64 HVM_DUPC_BY_LAB[65536];
+  HVM_DUPC_BY_LAB[ctr_lab]++;
 
   // Allocated as separate extents (ctr block + one cell per dup node) so
   // that, under reuse, each piece is requested at the size class it will

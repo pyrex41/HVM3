@@ -2,6 +2,7 @@
 
 Term reduce_mat_ctr(Term mat, Term ctr) {
   inc_itr();
+  { extern u64 HVM_MATC_BY_LAB[65536]; HVM_MATC_BY_LAB[term_lab(ctr)]++; }
   Tag mat_tag = term_tag(mat);
   Loc mat_loc = term_loc(mat);
   Lab mat_lab = term_lab(mat);

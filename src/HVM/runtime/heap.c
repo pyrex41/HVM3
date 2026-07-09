@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include <string.h>
 
 // Heap counters
 void set_len(u64 size) { *HVM.size = size; reuse_reset(); }
@@ -45,6 +46,15 @@ Term take(Loc loc) { return swap(loc, VOID); }
 // zero cell as corruption). Loc 0 is the root and is never freed, so 0
 // works as the empty-list sentinel in HVM_FREE_HEAD.
 #define REUSE_MAX_ARITY 64
+// Large tier: exact-size buckets for blocks of 64..REUSE_L_MAX-1 cells.
+// Shen-scale programs churn big CTR blocks (absvectors: symbol tables,
+// property vectors, dicts) whose functional update copies the whole
+// vector; leaking those (the old "arity >= 64 is leaked" rule) made
+// suite memory grow by the full vector size on every update. Vector
+// sizes recur exactly, so exact-size buckets almost always hit; a
+// bitmap scan finds the smallest larger block otherwise (split like
+// the small tier).
+#define REUSE_L_MAX     65536
 
 static bool HVM_REUSE_ON = false;
 static Loc  HVM_FREE_HEAD[REUSE_MAX_ARITY];
@@ -53,6 +63,13 @@ static u64  HVM_FREED_CELLS  = 0;
 static u64  HVM_REUSED_CELLS = 0;
 static u64  HVM_BUMPS[REUSE_MAX_ARITY];
 static u64  HVM_NFREE[REUSE_MAX_ARITY]; // blocks currently on each list
+static Loc  HVM_FREE_HEAD_L[REUSE_L_MAX];
+static u64  HVM_REUSE_MASK_L[REUSE_L_MAX / 64]; // bit (a&63) of word a>>6
+static u64  HVM_NFREE_L       = 0; // total blocks in the large tier
+static u64  HVM_BUMP_L_BLOCKS = 0;
+static u64  HVM_BUMP_L_CELLS  = 0;
+static int  HVM_TRACE_ON      = -1;         // lazy getenv(HVM_REUSE_TRACE)
+static u64  HVM_TRACE_MARK    = 1ULL << 27; // next size threshold (~1GB)
 
 void hvm_set_reuse(u64 on) { HVM_REUSE_ON = on != 0; }
 bool reuse_enabled() { return HVM_REUSE_ON; }
@@ -65,6 +82,9 @@ void reuse_reset() {
     HVM_FREE_HEAD[i] = 0;
   }
   HVM_REUSE_MASK = 0;
+  memset(HVM_FREE_HEAD_L, 0, sizeof(HVM_FREE_HEAD_L));
+  memset(HVM_REUSE_MASK_L, 0, sizeof(HVM_REUSE_MASK_L));
+  HVM_NFREE_L = 0;
 }
 
 u64 get_frees()  { return HVM_FREED_CELLS; }
@@ -92,35 +112,119 @@ static Loc reuse_pop(Loc cls) {
   return head;
 }
 
+// Large-tier list ops (same chaining scheme as the small tier).
+static void reuse_push_l(Loc loc, Loc cls) {
+  HVM.heap[loc] = term_new(SUB, 0, HVM_FREE_HEAD_L[cls]);
+  HVM_FREE_HEAD_L[cls] = loc;
+  HVM_REUSE_MASK_L[cls >> 6] |= 1ULL << (cls & 63);
+  HVM_NFREE_L++;
+}
+
+static Loc reuse_pop_l(Loc cls) {
+  Loc head = HVM_FREE_HEAD_L[cls];
+  HVM_FREE_HEAD_L[cls] = term_loc(HVM.heap[head]);
+  if (HVM_FREE_HEAD_L[cls] == 0) HVM_REUSE_MASK_L[cls >> 6] &= ~(1ULL << (cls & 63));
+  HVM_NFREE_L--;
+  return head;
+}
+
+// Push to whichever tier fits; blocks >= REUSE_L_MAX are leaked.
+static void reuse_push_any(Loc loc, Loc cls) {
+  if (cls == 0) return;
+  if (cls < REUSE_MAX_ARITY) reuse_push(loc, cls);
+  else if (cls < REUSE_L_MAX) reuse_push_l(loc, cls);
+}
+
+// Smallest large-tier class >= arity, or 0 if none.
+static Loc reuse_find_l(Loc arity) {
+  u64 w = arity >> 6;
+  u64 m = HVM_REUSE_MASK_L[w] & (~0ULL << (arity & 63));
+  if (m != 0) return (Loc)((w << 6) + __builtin_ctzll(m));
+  for (w++; w < REUSE_L_MAX / 64; w++) {
+    if (HVM_REUSE_MASK_L[w] != 0) return (Loc)((w << 6) + __builtin_ctzll(HVM_REUSE_MASK_L[w]));
+  }
+  return 0;
+}
+
 // Returns a dead block of `arity` cells at `loc` to the freelist.
 // The block must be fully unreachable (see the per-rule lifecycle map).
-// Oversized blocks are leaked (missed frees only cost memory).
+// Blocks >= REUSE_L_MAX cells are leaked (missed frees only cost memory).
 void free_node(Loc loc, Loc arity) {
-  if (!HVM_REUSE_ON || arity == 0 || arity >= REUSE_MAX_ARITY) return;
-  reuse_push(loc, arity);
+  if (!HVM_REUSE_ON || arity == 0 || arity >= REUSE_L_MAX) return;
+  reuse_push_any(loc, arity);
   HVM_FREED_CELLS += arity;
+}
+
+// Diagnostics: per-ctor-label counters for DUP-CTR and MAT-CTR (who is
+// being duplicated/matched); bumped from dup_ctr.c / mat_ctr.c.
+u64 HVM_DUPC_BY_LAB[65536];
+u64 HVM_MATC_BY_LAB[65536];
+
+static void dump_top_labs(const char *name, u64 *tab) {
+  for (int k = 0; k < 4; k++) {
+    u64 best = 0, besti = 0;
+    for (u64 i = 0; i < 65536; i++) {
+      if (tab[i] > best) { best = tab[i]; besti = i; }
+    }
+    if (best == 0) break;
+    fprintf(stderr, "  %s lab=%llu: %llu\n", name, (unsigned long long)besti, (unsigned long long)best);
+    tab[besti] = 0; // destructive top-k; totals keep accumulating after
+  }
+}
+
+// Optional growth trace: with HVM_REUSE_TRACE set, print one line to
+// stderr every time the bump watermark crosses another 128M cells.
+static void reuse_trace_maybe() {
+  if (HVM_TRACE_ON < 0) HVM_TRACE_ON = getenv("HVM_REUSE_TRACE") != NULL;
+  if (!HVM_TRACE_ON || *HVM.size < HVM_TRACE_MARK) return;
+  HVM_TRACE_MARK = *HVM.size + (1ULL << 27);
+  fprintf(stderr, "REUSE_TRACE size=%llu freed=%llu reused=%llu bumpL=%llu blocks/%llu cells nfreeL=%llu\n",
+          (unsigned long long)*HVM.size, (unsigned long long)HVM_FREED_CELLS,
+          (unsigned long long)HVM_REUSED_CELLS, (unsigned long long)HVM_BUMP_L_BLOCKS,
+          (unsigned long long)HVM_BUMP_L_CELLS, (unsigned long long)HVM_NFREE_L);
+  for (u64 i = 0; i < REUSE_MAX_ARITY; i++) {
+    if (HVM_BUMPS[i] > 1000000) fprintf(stderr, "  BUMP[%llu]: %llu\n", (unsigned long long)i, (unsigned long long)HVM_BUMPS[i]);
+  }
+  dump_top_labs("DUP-CTR", HVM_DUPC_BY_LAB);
+  dump_top_labs("MAT-CTR", HVM_MATC_BY_LAB);
 }
 
 // Allocation and accounting
 Loc alloc_node(Loc arity) {
-  if (HVM_REUSE_ON && arity > 0 && arity < REUSE_MAX_ARITY) {
-    // Smallest sufficient size class (exact class first); split the tail
-    // back onto the freelist. Blocks are plain extents, so any k-extent
-    // serves as an a-extent plus a (k-a)-extent.
-    u64 cand = HVM_REUSE_MASK >> arity;
-    if (cand != 0) {
-      Loc cls  = arity + (Loc)__builtin_ctzll(cand);
-      Loc head = reuse_pop(cls);
-      if (cls > arity) reuse_push(head + arity, cls - arity);
-      HVM_REUSED_CELLS += arity;
-      return head;
+  if (HVM_REUSE_ON && arity > 0 && arity < REUSE_L_MAX) {
+    if (arity < REUSE_MAX_ARITY) {
+      // Smallest sufficient size class (exact class first); split the tail
+      // back onto the freelist. Blocks are plain extents, so any k-extent
+      // serves as an a-extent plus a (k-a)-extent.
+      u64 cand = HVM_REUSE_MASK >> arity;
+      if (cand != 0) {
+        Loc cls  = arity + (Loc)__builtin_ctzll(cand);
+        Loc head = reuse_pop(cls);
+        if (cls > arity) reuse_push(head + arity, cls - arity);
+        HVM_REUSED_CELLS += arity;
+        return head;
+      }
+    }
+    // Large tier (also serves small requests when the small tier is dry).
+    if (HVM_NFREE_L > 0) {
+      Loc cls = reuse_find_l(arity);
+      if (cls != 0) {
+        Loc head = reuse_pop_l(cls);
+        if (cls > arity) reuse_push_any(head + arity, cls - arity);
+        HVM_REUSED_CELLS += arity;
+        return head;
+      }
     }
   }
   if (*HVM.size + arity > MAX_HEAP_SIZE) {
     printf("Heap memory limit exceeded\n");
     exit(1);
   }
-  if (HVM_REUSE_ON && arity < REUSE_MAX_ARITY) HVM_BUMPS[arity]++;
+  if (HVM_REUSE_ON) {
+    if (arity < REUSE_MAX_ARITY) HVM_BUMPS[arity]++;
+    else { HVM_BUMP_L_BLOCKS++; HVM_BUMP_L_CELLS += arity; }
+    reuse_trace_maybe();
+  }
   u64 old = *HVM.size;
   *HVM.size += arity;
   return old;
@@ -131,6 +235,8 @@ void reuse_dump() {
     if (HVM_BUMPS[i] > 0) fprintf(stderr, "BUMP[%llu]: %llu\n", (unsigned long long)i, (unsigned long long)HVM_BUMPS[i]);
     if (HVM_NFREE[i] > 0) fprintf(stderr, "FREELIST[%llu]: %llu blocks\n", (unsigned long long)i, (unsigned long long)HVM_NFREE[i]);
   }
+  if (HVM_BUMP_L_BLOCKS > 0) fprintf(stderr, "BUMP_LARGE: %llu blocks / %llu cells\n", (unsigned long long)HVM_BUMP_L_BLOCKS, (unsigned long long)HVM_BUMP_L_CELLS);
+  if (HVM_NFREE_L > 0) fprintf(stderr, "FREELIST_LARGE: %llu blocks\n", (unsigned long long)HVM_NFREE_L);
 }
 
 // Eraser propagation (collect)
