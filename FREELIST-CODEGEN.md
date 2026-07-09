@@ -117,6 +117,46 @@ interpreted `reduce/*.c` already handle (`dup_ctr`, `mat_ctr`, `*_era`, dup
 paths). Validate on tiny programs that drop subtrees, then re-test kernel boot
 on a machine with clean swap.
 
+## CRITICAL latent bug (found 2026-07-09, MUST fix before kernel-scale HVM_REUSE_C)
+
+The death-site sweep's adversarial testing found a **soundness bug in S1/S2
+itself** (present since commit `51f2195`, i.e. BEFORE the sweep — the sweep
+steps are provably inert on it):
+
+- Repro shape (`adv3.hvm`): DUP a `#Cons`, use one copy in a list that a TCO
+  `@sum` consumes, and drop the other copy. Under `HVM_REUSE_C` the result is
+  **wrong** — a `#Cons` field erases to `*` (WORK 1013005 vs stock 1014007).
+  Correct with the flag off.
+- Cause (likely): S1 frees the consumed CTR-mat scrutinee node in `@sum`'s TCO
+  path, but when that ctr is **shared via a pending/lazy DUP**, the node is not
+  solely owned — freeing it corrupts the other copy. Interpreted mode is safe
+  because reduction order splits the DUP before the mat consumes; compiled
+  fast-mode can free the scrutinee while the dup is still pending.
+- Why it matters: the kernel DUPs the world (which holds `#Cons`/assoc
+  structures) and consumes it constantly, so this is a strong candidate to
+  corrupt the deferred kernel-boot `-c` validation. **Fix the scrutinee-free to
+  be DUP-safe before trusting HVM_REUSE_C at kernel scale** — e.g. only free
+  when the scrutinee is provably linear/unshared, or ensure any pending dup has
+  resolved. The 34× churn win stands (churn has no such sharing); this is an
+  edge S1 didn't cover.
+
+## Sweep (S3-codegen) landed 2026-07-09: 4 more death sites
+
+Committed `7914058`,`b257de9`,`a7922bc`,`b3a0e8e` (each: oracle byte-identical
+ON and OFF, churn bounded, isolated SIZE-drop test):
+1. **DUP-SUP inline same-label collapse** — `free_node(sup_loc,2)` in the 3
+   inline SUP branches. NB the DUP family analysis showed `dup_ctr/lam/ref` are
+   **allocation-only** (they reuse the consumed node in place), so the
+   "DUP-dropped world copies" hypothesis was largely wrong — dup interactions
+   don't drop; reclamation happens at DUP-ERA/MAT-CTR. Kernel impact of this
+   step is expected minor (bounds literal-superposition churn).
+2. **REF-ERA short-circuit** — `collect(ref)` before the ERA early-return.
+3. **Unused function argument** — `collect(arg)` when a param has zero uses.
+4. **Unused let-binding value** — `collect` the dropped let value.
+
+Open follow-up: Step 2's freed cells aren't reused on the frame-alloc path
+(reused=0) — a reuse-plumbing follow-up, frees-but-doesn't-yet-bound there.
+
 ## S2 status (2026-07-09): implemented, but kernel still balloons
 
 S2 = collect zero-use CTR-mat fields (the `kl.aset`-replaces-value case) is
