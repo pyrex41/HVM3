@@ -117,6 +117,39 @@ interpreted `reduce/*.c` already handle (`dup_ctr`, `mat_ctr`, `*_era`, dup
 paths). Validate on tiny programs that drop subtrees, then re-test kernel boot
 on a machine with clean swap.
 
+## S2 resume checklist (do after a reboot / clean swap)
+
+The scratchpad worktree and built binary are ephemeral (`/private/tmp`), but
+this branch is pushed to `pyrex41/HVM3`. To resume:
+
+1. **Re-establish the worktree** (branch is safe in `~/projects/HVM3/.git` and
+   on the fork): `git -C ~/projects/HVM3 worktree add <persistent-path> freelist`
+   (prefer a persistent path this time, not `/private/tmp`). `cabal build exe:hvm`.
+2. **Recreate the tiny harness:** the `churn.hvm` program is in the validation
+   table above; `memguard2.sh` = system-level watchdog (kills on low free-RAM /
+   high swap — RSS is useless here). Oracle: factorial=3628800/108,
+   tsum=523776/29677, map=30/467, supfact=`&3{6 120}`/147.
+3. **Implement S2 — emit collect()/free_node at codegen death sites.** The
+   interpreted freelist already frees at these sites; mirror each into the
+   generated C in `Compile.hs`. Files the interpreted layer touched (the
+   death-site catalogue): `dup_ctr.c`, `dup_lam.c`, `dup_ref.c`, `dup_sup.c`,
+   `mat_ctr.c`, `mat_era.c`, `mat_w32.c`, `opx_era.c`, `opy_era.c`,
+   `opy_w32.c`, `app_era.c`, `app_lam.c`, `let.c`. The dominant kernel source
+   is **dropped assoc/world spines**: `kl.aset` rebuilds a spine and drops the
+   old one; those nodes are unreachable but never entered `reus`. A `collect()`
+   walk (already in `heap.c` for interpreted) frees a dropped subtree
+   recursively — the codegen needs to call it where a rule erases/discards a
+   subterm.
+4. **Same hazards as S1:** never free a live cell (frame, or a subterm still
+   referenced) → `GOT 0`. Beware runtime fast paths that skip an allocation
+   (the W32-OP2 class). Validate each interaction type on a tiny program that
+   *drops* a subtree (e.g. repeatedly `set` a global to shrink a stored list;
+   build-and-discard trees) — SIZE must stay bounded and output correct.
+5. **Only then** re-test kernel `--smoke -c` with `HVM_REUSE_C=1` under
+   `memguard2.sh` (free-RAM min ~2.5G, swap max ~14G). Target: bounded SIZE /
+   peak (was 43 GB stock, ~14.5 GB after S1) and boot completes `(+ 1 2)=3`.
+   If still large, profile which death site dominates before adding more.
+
 ## Build / use
 
 ```

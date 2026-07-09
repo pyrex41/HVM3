@@ -1,0 +1,5 @@
+data L { #Nil #Cons{h t} }
+@build(n xs) = ~n !xs { 0: xs 1+p: !&0{a b}=p @build(a #Cons{b xs}) }
+@consume(xs r) = ~xs !r { #Nil: r #Cons{h t}: @consume(t (+ h r)) }
+@loop(k acc) = ~k !acc { 0: acc 1+p: @loop(p (+ acc @consume(@build(100 #Nil) 0))) }
+@main = @loop(100_000 0)
