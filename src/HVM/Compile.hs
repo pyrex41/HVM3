@@ -472,14 +472,19 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
       -- Extract fields, then dispose of the dead scrutinee (see the plain-CTR
       -- path below for the rationale: TCO speculative reuse leaks on fast
       -- paths, so free outright and let the body recycle via alloc_node).
-      forM_ (zip [0..] fds) $ \(k, fd) -> do
+      fdNams <- forM (zip [0..] fds) $ \(k, fd) -> do
         fdNam <- fresh "fd"
         emit $ "Term " ++ fdNam ++ " = got(term_loc(" ++ valNam ++ ") + " ++ show k ++ ");"
         bind fd fdNam
+        return (fd, fdNam)
       tcoNow <- gets tco
       if tcoNow && length fds > 0
         then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
         else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
+      -- S2: collect fields the branch drops (used zero times).
+      forM_ fdNams $ \(fd, fdNam) ->
+        when (coreCount fd bod + sum [ coreCount fd mv | (_, mv) <- mov ] == 0) $
+          emit $ "collect(" ++ fdNam ++ ");"
       forM_ mov $ \(key, val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -529,10 +534,11 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
       -- Extract fields BEFORE disposing of the scrutinee node: the fields hold
       -- copies of the cell contents (they point at OTHER nodes, not back into
       -- this ctr), so the ctr's own cells are dead once extracted.
-      forM_ (zip [0..] fds) $ \ (k,fd) -> do
+      fdNams <- forM (zip [0..] fds) $ \ (k,fd) -> do
         fdNam <- fresh "fd"
         emit $ "Term " ++ fdNam ++ " = got(term_loc(" ++ valNam ++ ") + " ++ show k ++ ");"
         bind fd fdNam
+        return (fd, fdNam)
       -- Dispose of the dead scrutinee. For a TCO function, speculative
       -- intra-rule reuse is unreliable — a runtime fast path (e.g. the W32
       -- branch of an OP2) can skip the allocation that was supposed to reuse
@@ -543,6 +549,11 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
       if tcoNow && length fds > 0
         then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
         else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
+      -- S2: a field the branch uses ZERO times names a dropped subtree
+      -- (e.g. the old value kl.aset replaces) -- collect it recursively.
+      forM_ fdNams $ \(fd, fdNam) ->
+        when (coreCount fd bod + sum [ coreCount fd mv | (_, mv) <- mov ] == 0) $
+          emit $ "collect(" ++ fdNam ++ ");"
       forM_ mov $ \ (key,val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -734,6 +745,30 @@ compileFastAlloc name arity = do
                     then MS.insertWith (++) (k - arity) [loc ++ " + " ++ show arity] reuse'
                     else reuse'
       modify $ \st -> st { reus = reuse'' }
+
+-- Count free occurrences of a variable name in a Core term (stops at a
+-- shadowing binder, though post-Adjust names are unique). Used to find binders
+-- used ZERO times — those name a dropped subtree that must be collect()'d
+-- (S2), e.g. the old value kl.aset/kl.set replaces.
+coreCount :: String -> Core -> Int
+coreCount x = go where
+  go (Var y)         = if y == x then 1 else 0
+  go (Ref _ _ as)    = sum (map go as)
+  go Era             = 0
+  go (Lam y b)       = if y == x then 0 else go b
+  go (App f a)       = go f + go a
+  go (Sup _ a b)     = go a + go b
+  go (Dup _ y z v b) = go v + (if y == x || z == x then 0 else go b)
+  go (Ctr _ as)      = sum (map go as)
+  go (U32 _)         = 0
+  go (Chr _)         = 0
+  go (Op2 _ a b)     = go a + go b
+  go (Let _ y v b)   = go v + (if y == x then 0 else go b)
+  go (Inc a)         = go a
+  go (Dec a)         = go a
+  go (Mat _ v mvs cs) =
+    go v + sum [ go mv | (_, mv) <- mvs ]
+         + sum [ if x `elem` fs then 0 else go b | (_, fs, b) <- cs ]
 
 -- Return unconsumed reuse cells to the GLOBAL freelist at a rule terminal.
 -- Intra-rule reuse (compileFastAlloc) parks dead redex cells in `reus` for
