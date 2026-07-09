@@ -1,0 +1,7 @@
+data List { #Nil #Cons{h t} }
+@K(x y) = x
+@loop(i) = ~i {
+  0: 0
+  1+p: @K(@loop(p) #Cons{1 2})
+}
+@main = @loop(100000)

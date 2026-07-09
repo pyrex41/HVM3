@@ -379,6 +379,11 @@ compileFast book fid core copy args = do
     else
       return ()
     bind arg argNam
+    -- S3: an argument the body uses ZERO times names a dropped subtree
+    -- (the erased/unused arg) -- collect it recursively. Disjoint from the
+    -- frame-cell free (flushReuse frees the term_loc(ref) block, not what its
+    -- slots point at), so no double-free. TCO iters 2+ are not covered here.
+    when (coreCount arg core == 0) $ emit $ "collect(" ++ argNam ++ ");"
     return argNam
   reuse (length (snd (fst (mget (fidToFun book) fid)))) "term_loc(ref)"
   compileFastArgs book fid core args
