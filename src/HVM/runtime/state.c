@@ -1,4 +1,5 @@
 #include "Runtime.h"
+#include <stdlib.h>
 
 State HVM = {
   .sbuf = NULL,
@@ -31,6 +32,15 @@ void hvm_set_state(State* hvm) {
     HVM.cari[i] = hvm->cari[i];
     HVM.clen[i] = hvm->clen[i];
     HVM.cadt[i] = hvm->cadt[i];
+  }
+  // Compiled-mode freelist (opt-in). This runs inside the dlopen'd .so, so it
+  // toggles the .so's OWN copy of the freelist statics (the main process and
+  // the .so each compile heap.c separately; only the HVM struct / heap array
+  // above is shared). Gated on HVM_REUSE_C so compiled reuse is A/B testable
+  // and off by default. The reduction rules in the generated C free dead
+  // cells via free_node(); without this flag those calls are no-ops.
+  if (getenv("HVM_REUSE_C") != NULL) {
+    hvm_set_reuse(1);
   }
 }
 

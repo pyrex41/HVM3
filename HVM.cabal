@@ -56,4 +56,4 @@ executable hvm
     main-is:          Main.hs
     build-depends:    HVM
     hs-source-dirs:   app
-    ghc-options:     -Wno-all -threaded
+    ghc-options:     -Wno-all -threaded -rtsopts

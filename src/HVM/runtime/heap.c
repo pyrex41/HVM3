@@ -57,6 +57,7 @@ Term take(Loc loc) { return swap(loc, VOID); }
 #define REUSE_L_MAX     65536
 
 static bool HVM_REUSE_ON = false;
+static void reuse_report_atexit(void);  // fwd decl (hvm_set_reuse references it; codegen doesn't preserve def order)
 static Loc  HVM_FREE_HEAD[REUSE_MAX_ARITY];
 static u64  HVM_REUSE_MASK   = 0; // bit i set iff HVM_FREE_HEAD[i] != 0
 static u64  HVM_FREED_CELLS  = 0;
@@ -71,7 +72,14 @@ static u64  HVM_BUMP_L_CELLS  = 0;
 static int  HVM_TRACE_ON      = -1;         // lazy getenv(HVM_REUSE_TRACE)
 static u64  HVM_TRACE_MARK    = 1ULL << 27; // next size threshold (~1GB)
 
-void hvm_set_reuse(u64 on) { HVM_REUSE_ON = on != 0; }
+void hvm_set_reuse(u64 on) {
+  HVM_REUSE_ON = on != 0;
+  static int reuse_report_registered = 0;
+  if (HVM_REUSE_ON && !reuse_report_registered) {
+    reuse_report_registered = 1;
+    atexit(reuse_report_atexit);
+  }
+}
 bool reuse_enabled() { return HVM_REUSE_ON; }
 
 // Drops all freelist entries. Must be called whenever the bump pointer is
@@ -89,6 +97,26 @@ void reuse_reset() {
 
 u64 get_frees()  { return HVM_FREED_CELLS; }
 u64 get_reuses() { return HVM_REUSED_CELLS; }
+
+// At-exit report of THIS translation unit's freelist counters. The main
+// binary and the dlopen'd .so each compile heap.c separately, so each has
+// its own HVM_FREED_CELLS/HVM_REUSED_CELLS; the FFI get_frees/get_reuses
+// only sees the main binary's (always ~0 in compiled mode, where all
+// reduction runs in the .so). This destructor prints the local copy, so the
+// .so line reveals what compiled mode actually did. Gated on HVM_REUSE_STATS.
+// Registered via atexit() from hvm_set_reuse (destructor attribute proved
+// unreliable under the .so's -flto). Runs in this translation unit's context,
+// so the .so's registration reports the .so's own counters.
+static void reuse_report_atexit(void) {
+  if (getenv("HVM_REUSE_STATS") != NULL) {
+    // Only touch this TU's own statics — HVM.size points at shared state that
+    // may already be torn down when atexit fires (segfaults otherwise).
+    fprintf(stderr, "SO_REUSE: on=%d freed=%llu reused=%llu\n",
+            (int)HVM_REUSE_ON,
+            (unsigned long long)HVM_FREED_CELLS,
+            (unsigned long long)HVM_REUSED_CELLS);
+  }
+}
 
 // Free-list links are stored in the first cell of each freed block as a
 // SUB-tagged term (tag 0x03 is never dispatched on at runtime, and the

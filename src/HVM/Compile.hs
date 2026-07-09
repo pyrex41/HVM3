@@ -469,11 +469,17 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
     itrA <- foldM (\itr (mov, (ctr, fds, bod)) -> do
       emit $ "case " ++ show (mget (ctrToCid book) ctr) ++ ": {"
       tabInc
-      reuse (length fds) ("term_loc(" ++ valNam ++ ")")
+      -- Extract fields, then dispose of the dead scrutinee (see the plain-CTR
+      -- path below for the rationale: TCO speculative reuse leaks on fast
+      -- paths, so free outright and let the body recycle via alloc_node).
       forM_ (zip [0..] fds) $ \(k, fd) -> do
         fdNam <- fresh "fd"
         emit $ "Term " ++ fdNam ++ " = got(term_loc(" ++ valNam ++ ") + " ++ show k ++ ");"
         bind fd fdNam
+      tcoNow <- gets tco
+      if tcoNow && length fds > 0
+        then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
+        else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
       forM_ mov $ \(key, val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -520,11 +526,23 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
     forM_ (zip [0..] css) $ \ (i, (ctr,fds,bod)) -> do
       emit $ "case " ++ show i ++ ": {"
       tabInc
-      reuse (length fds) ("term_loc(" ++ valNam ++ ")")
+      -- Extract fields BEFORE disposing of the scrutinee node: the fields hold
+      -- copies of the cell contents (they point at OTHER nodes, not back into
+      -- this ctr), so the ctr's own cells are dead once extracted.
       forM_ (zip [0..] fds) $ \ (k,fd) -> do
         fdNam <- fresh "fd"
         emit $ "Term " ++ fdNam ++ " = got(term_loc(" ++ valNam ++ ") + " ++ show k ++ ");"
         bind fd fdNam
+      -- Dispose of the dead scrutinee. For a TCO function, speculative
+      -- intra-rule reuse is unreliable — a runtime fast path (e.g. the W32
+      -- branch of an OP2) can skip the allocation that was supposed to reuse
+      -- this cell, leaking it every iteration. So free it to the global pool
+      -- outright; the body's allocations recycle it via alloc_node. For
+      -- non-TCO the allocation always runs, so direct reuse is kept.
+      tcoNow <- gets tco
+      if tcoNow && length fds > 0
+        then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
+        else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
       forM_ mov $ \ (key,val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -615,6 +633,7 @@ compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
       argT <- compileFastCore book fid arg
       emit $ "" ++ ctxVar ++ " = " ++ argT ++ ";"
     emit $ "itrs += " ++ show (itr + 1) ++ ";"
+    flushReuse ["term_loc(ref)"]   -- free dead scrutinee cells, but KEEP the live loop frame
     emit $ "fst_iter = false;"
     emit $ "continue;"
 
@@ -667,6 +686,7 @@ compileFastBody book fid term ctx stop itr = do
   body <- compileFastCore book fid term
   emit $ "itrs += " ++ show itr ++ ";"
   compileFastSave book fid term ctx itr
+  flushReuse []   -- plain return: the arg frame is dead too, free everything
   emit $ "return " ++ body ++ ";"
 
 -- Completes a fast mode call
@@ -696,16 +716,53 @@ compileFastAlloc name arity = do
         emit $ "  " ++ name ++ " = " ++ loc ++ ";"
         emit $ "} else {"
         emit $ "  " ++ name ++ " = alloc_node(" ++ show arity ++ ");"
+        -- On iterations 2+ this reuse loc is NOT taken (alloc_node above), so
+        -- the cell it names is dead. The frame ("term_loc(ref)") stays live
+        -- across iterations, but a per-iteration cell (a consumed scrutinee)
+        -- is dead every iteration and was previously LEAKED here — free it to
+        -- the global pool so cross-rule allocations can recycle it. Without
+        -- this, a TCO loop that consumes N nodes leaks N-1 of them.
+        when (not ("term_loc(ref)" `isPrefixOf` loc)) $
+          emit $ "  free_node(" ++ loc ++ ", " ++ show arity ++ ");"
         emit $ "}"
       else do
         emit $ name ++ " = " ++ loc ++ ";"
       -- Remove the used location
       let reuse' = MS.insert k locs reuse
       -- If we used a location bigger than needed, add the remainder back
-      let reuse'' = if k > arity 
+      let reuse'' = if k > arity
                     then MS.insertWith (++) (k - arity) [loc ++ " + " ++ show arity] reuse'
                     else reuse'
       modify $ \st -> st { reus = reuse'' }
+
+-- Return unconsumed reuse cells to the GLOBAL freelist at a rule terminal.
+-- Intra-rule reuse (compileFastAlloc) parks dead redex cells in `reus` for
+-- this rule's own allocations; whatever is left when the rule returns is
+-- genuinely dead (the reuse machinery already treats these as dead, and stock
+-- compiled mode is correct) but was previously stranded — the bump pointer
+-- never rewound, so it leaked. free_node hands each back to heap.c's per-arity
+-- freelist. When HVM_REUSE_C is unset, free_node is a no-op (guarded in
+-- heap.c), so this preserves stock behavior exactly. Only one runtime path
+-- reaches a given terminal, so no cell is double-freed.
+--
+-- CAUTION: the argument-frame node "term_loc(ref)" is seeded into `reus` at
+-- function entry. On a plain return it is dead, but at a TAIL-CALL loop-back
+-- it is the LIVE loop frame (reused across iterations) — freeing it there
+-- corrupts the next iteration (observed: "GOT 0"). `protect` skips locations
+-- by prefix so the TCO path can keep the frame while still freeing dead
+-- scrutinee cells.
+flushReuse :: [String] -> Compile ()
+flushReuse protect = do
+  reuse <- gets reus
+  let keep loc = any (\p -> p `isPrefixOf` loc) protect
+  kept <- foldM (\acc (arity, locs) -> do
+            let skip = filter keep locs
+            let free = filter (not . keep) locs
+            forM_ free $ \loc ->
+              emit $ "free_node(" ++ loc ++ ", " ++ show arity ++ ");"
+            return (if null skip then acc else MS.insert arity skip acc))
+          MS.empty (MS.toList reuse)
+  modify $ \st -> st { reus = kept }
 
 -- Compiles a core term in fast mode
 compileFastCore :: Book -> Word16 -> Core -> Compile String
