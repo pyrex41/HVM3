@@ -131,7 +131,11 @@ Off (no `HVM_REUSE_C`) is stock behavior. Interpreted mode is unchanged
 
 Forked from upstream `HigherOrderCO/HVM3` at `bff58a3`. The interpreted
 freelist (`300cc93`..`bff58a3`) is prior work on this branch; this layer adds
-the compiled-mode wiring on top. Intended to live on an internal GitLab fork;
-a subset (the codegen `free_node` emission) could be proposed upstream later,
-but the `HVM_REUSE_C` gating and `.so`-state enable are deliberately
-conservative so stock `-c` is unaffected.
+the compiled-mode wiring on top.
+
+Hosted on our GitHub fork **`pyrex41/HVM3`** (branch `freelist`). Local repo
+`~/projects/HVM3` has `origin` = our fork, `upstream` = `HigherOrderCO/HVM3`.
+Because `HVM_REUSE_C` gating and the `.so`-state enable keep stock `-c`
+byte-identical, the codegen `free_node` emission is a plausible upstream PR
+later (open one from `pyrex41:freelist` → `HigherOrderCO:main` if desired) —
+but that decision is deferred.
