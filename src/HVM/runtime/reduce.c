@@ -134,7 +134,7 @@ Term normal(Term term) {
   Lab lab = term_lab(wnf);
   Loc loc = term_loc(wnf);
   switch (tag) {
-    case LAM: { Term bod = got(loc + 0); bod = normal(bod); set(term_loc(wnf) + 1, bod); return wnf; }
+    case LAM: { Term bod = got(loc + 0); bod = normal(bod); set(term_loc(wnf) + 0, bod); return wnf; }
     case APP: { Term fun = got(loc + 0); Term arg = got(loc + 1); fun = normal(fun); arg = normal(arg); set(term_loc(wnf) + 0, fun); set(term_loc(wnf) + 1, arg); return wnf; }
     case SUP: { Term tm0 = got(loc + 0); Term tm1 = got(loc + 1); tm0 = normal(tm0); tm1 = normal(tm1); set(term_loc(wnf) + 0, tm0); set(term_loc(wnf) + 1, tm1); return wnf; }
     case DP0:

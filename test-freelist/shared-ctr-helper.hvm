@@ -1,0 +1,8 @@
+data L { #Nil #Cons{h t} }
+@sum(xs acc) = ~xs !acc { #Nil: acc #Cons{h t}: @sum(t (+ h acc)) }
+@through(xs) = @sum(xs 0)
+@loop(n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{a b}=#Cons{7 #Nil} @loop(p (+ acc @through(a)))
+}
+@main = @loop(1000 0)

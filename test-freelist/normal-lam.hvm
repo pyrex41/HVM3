@@ -1,0 +1,2 @@
+data L { #Nil #Cons{h t} }
+@main = λx #Cons{(+ 1 2) #Nil}
