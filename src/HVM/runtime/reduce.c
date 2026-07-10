@@ -2,7 +2,7 @@
 
 // Core reducer and helpers (dispatcher, WHNF, normal form)
 
-Term reduce(Term term) {
+static Term reduce_impl(Term term, bool atomic_subs) {
   if (term_tag(term) >= ERA) return term;
   Term  next = term;
   u64   stop = *HVM.spos;
@@ -34,11 +34,13 @@ Term reduce(Term term) {
       case DP1: {
         Term sub = got(loc + 0);
         if (term_get_bit(sub) == 0) { spush(next, sbuf, &spos); next = sub; continue; }
+        if (atomic_subs) sub = take(loc + 0);
         next = term_rem_bit(sub); free_node(loc, 1); continue; // sub cell consumed
       }
       case VAR: {
         Term sub = got(loc);
         if (term_get_bit(sub) == 0) break;
+        if (atomic_subs) sub = take(loc);
         next = term_rem_bit(sub); free_node(loc, 1); continue; // sub cell consumed
       }
       case REF: { *HVM.spos = spos; next = reduce_ref(next); spos = *HVM.spos; continue; }
@@ -120,12 +122,31 @@ Term reduce(Term term) {
   }
 }
 
+Term reduce(Term term) {
+  return reduce_impl(term, false);
+}
+
+Term reduce_owned(Term term) {
+  return reduce_impl(term, true);
+}
+
 Term reduce_at(Loc host) {
   Term tm0 = got(host);
   if (term_tag(tm0) >= ERA) return tm0;
   Term tm1 = reduce(tm0);
   set(host, tm1);
   return tm1;
+}
+
+// Consumes the term stored in `host` and returns its WHNF without writing it
+// back. This is used only by compiled reuse: the caller owns the returned term,
+// while the frame slot stays empty and can be reclaimed without retaining a
+// second alias. Substituted VAR/DP cells are consumed atomically for the same
+// reason; unresolved DUP cells remain shared until their interaction fires.
+Term reduce_take_at(Loc host) {
+  Term tm0 = take(host);
+  if (term_tag(tm0) >= ERA) return tm0;
+  return reduce_impl(tm0, true);
 }
 
 Term normal(Term term) {

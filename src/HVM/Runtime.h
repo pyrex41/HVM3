@@ -155,7 +155,9 @@ void print_heap();
 
 // Reductions (public API)
 Term reduce(Term term);
+Term reduce_owned(Term term);
 Term reduce_at(Loc host);
+Term reduce_take_at(Loc host);
 Term normal(Term term);
 
 // Interaction functions

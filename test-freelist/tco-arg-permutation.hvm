@@ -1,0 +1,5 @@
+@permute(n x y) = ~n !x !y {
+  0: (+ (* x 100) y)
+  1+p: @permute(p y x)
+}
+@main = @permute(101 3 7)

@@ -1,0 +1,9 @@
+data L { #Nil #Cons{h t} }
+@sum(xs acc) = ~xs !acc { #Nil: acc #Cons{h t}: @sum(t (+ h acc)) }
+@carry(n xs) = ~n !xs { 0: @sum(xs 0) 1+p: @carry(p xs) }
+@loop(n acc) = ~n !acc {
+  0: acc
+  1+p: !&0{a b}=#Cons{7 #Nil}
+       @loop(p (+ acc (+ @carry(2 a) @carry(3 b))))
+}
+@main = @loop(10000 0)

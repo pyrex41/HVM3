@@ -350,9 +350,13 @@ compileFast book fid core copy args = do
   args <- forM (zip [0..] args) $ \ (i, (strict, arg)) -> do
     argNam <- fresh "arg"
     if strict then do
-      emit $ "Term " ++ argNam ++ " = reduce_at(term_loc(ref) + " ++ show i ++ ");"
+      emit $ "Term " ++ argNam ++ " = reuse_enabled()"
+          ++ " ? reduce_take_at(term_loc(ref) + " ++ show i ++ ")"
+          ++ " : reduce_at(term_loc(ref) + " ++ show i ++ ");"
     else do
-      emit $ "Term " ++ argNam ++ " = got(term_loc(ref) + " ++ show i ++ ");"
+      emit $ "Term " ++ argNam ++ " = reuse_enabled()"
+          ++ " ? take(term_loc(ref) + " ++ show i ++ ")"
+          ++ " : got(term_loc(ref) + " ++ show i ++ ");"
     if copy && strict then do
       case MS.lookup fid (fidToLab book) of
         Just labs -> do
@@ -409,7 +413,7 @@ compileFastBody :: Book -> Word16 -> Core -> [String] -> Bool -> Int -> Compile 
 compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
   valT   <- compileFastCore book fid val
   valNam <- fresh "val"
-  emit $ "Term " ++ valNam ++ " = reduce(" ++ valT ++ ");"
+  emit $ "Term " ++ valNam ++ " = reuse_enabled() ? reduce_owned(" ++ valT ++ ") : reduce(" ++ valT ++ ");"
   let valVar = "scrut%"++valNam
   bind valVar valNam
   let isNumeric = length css > 0 && (let (ctr,fds,bod) = css !! 0 in ctr == "0")
@@ -647,12 +651,14 @@ compileFastBody book fid term@(Let mode var val bod) ctx stop itr = do
         t@(Ref _ rFid _) -> do
           checkRefAri book fid t
           valNam <- fresh "val"
-          emit $ "Term " ++ valNam ++ " = reduce(" ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ "));"
+          emit $ "Term " ++ valNam ++ " = reuse_enabled() ? reduce_owned("
+              ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ ")) : reduce("
+              ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ "));"
           bind var valNam
           when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
         _ -> do
           valNam <- fresh "val"
-          emit $ "Term " ++ valNam ++ " = reduce(" ++ valT ++ ");"
+          emit $ "Term " ++ valNam ++ " = reuse_enabled() ? reduce_owned(" ++ valT ++ ") : reduce(" ++ valT ++ ");"
           bind var valNam
           when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
   compileFastBody book fid bod ctx stop itr
@@ -661,9 +667,16 @@ compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
   -- Tail-call optimization
   | fFid == fid = do
     checkRefAri book fid term
-    forM_ (zip fArg ctx) $ \ (arg, ctxVar) -> do
+    -- Recursive arguments may permute or depend on old parameters. Evaluate
+    -- every argument while the complete old environment is still available,
+    -- then replace the loop locals as one logical operation.
+    nextArgs <- forM fArg $ \arg -> do
       argT <- compileFastCore book fid arg
-      emit $ "" ++ ctxVar ++ " = " ++ argT ++ ";"
+      argNam <- fresh "next_arg"
+      emit $ "Term " ++ argNam ++ " = " ++ argT ++ ";"
+      return argNam
+    forM_ (zip nextArgs ctx) $ \ (argNam, ctxVar) ->
+      emit $ ctxVar ++ " = " ++ argNam ++ ";"
     emit $ "itrs += " ++ show (itr + 1) ++ ";"
     flushReuse ["term_loc(ref)"]   -- free dead scrutinee cells, but KEEP the live loop frame
     emit $ "fst_iter = false;"
@@ -675,7 +688,7 @@ compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
     let [lab, val, Lam dp0 (Lam dp1 bod)] = fArg
     labNam <- fresh "lab"
     labTm  <- compileFastCore book fid lab
-    emit $ "Term " ++ labNam ++ " = reduce(" ++ labTm ++ ");"
+    emit $ "Term " ++ labNam ++ " = reuse_enabled() ? reduce_owned(" ++ labTm ++ ") : reduce(" ++ labTm ++ ");"
     emit $ "if (term_tag(" ++ labNam ++ ") != W32) {"
     emit $ "  printf(\"ERROR:non-numeric-sup-label\\n\");"
     emit $ "}"
@@ -745,19 +758,20 @@ compileFastAlloc name arity = do
       -- Too hard to determine statically if reusing is ok in tail-call-optimization
       tco <- gets tco
       if tco then do
-        emit $ "if (fst_iter) {"
-        emit $ "  " ++ name ++ " = " ++ loc ++ ";"
-        emit $ "} else {"
-        emit $ "  " ++ name ++ " = alloc_node(" ++ show arity ++ ");"
-        -- On iterations 2+ this reuse loc is NOT taken (alloc_node above), so
-        -- the cell it names is dead. The frame ("term_loc(ref)") stays live
-        -- across iterations, but a per-iteration cell (a consumed scrutinee)
-        -- is dead every iteration and was previously LEAKED here — free it to
-        -- the global pool so cross-rule allocations can recycle it. Without
-        -- this, a TCO loop that consumes N nodes leaks N-1 of them.
-        when (not ("term_loc(ref)" `isPrefixOf` loc)) $
+        if "term_loc(ref)" `isPrefixOf` loc then do
+          -- The frame is reserved for the entire loop. Reusing it on the first
+          -- iteration can make a carried argument point back into the frame;
+          -- a later write/free then destroys that live result.
+          emit $ name ++ " = alloc_node(" ++ show arity ++ ");"
+        else do
+          emit $ "if (fst_iter) {"
+          emit $ "  " ++ name ++ " = " ++ loc ++ ";"
+          emit $ "} else {"
+          emit $ "  " ++ name ++ " = alloc_node(" ++ show arity ++ ");"
+          -- On iterations 2+ this reuse loc is NOT taken (alloc_node above), so
+          -- the cell it names is dead and must enter the global pool.
           emit $ "  free_node(" ++ loc ++ ", " ++ show arity ++ ");"
-        emit $ "}"
+          emit $ "}"
       else do
         emit $ name ++ " = " ++ loc ++ ";"
       -- Remove the used location
