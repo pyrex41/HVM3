@@ -1,0 +1,19 @@
+data A { #Tail{v} #Bind{k v next} }
+@build(n tail) = ~n !tail {
+  0: tail
+  1+p: @build(p #Bind{1 2 tail})
+}
+@replace(xs val) = ~xs !val {
+  #Tail{old}: #Tail{val}
+  #Bind{k v next}: #Bind{k v @replace(next val)}
+}
+@tail(xs) = ~xs {
+  #Tail{v}: v
+  #Bind{k v next}: @tail(next)
+}
+@loop(n xs) = ~n !xs {
+  0: @tail(xs)
+  1+p: !&0{next val}=p
+       @loop(next @replace(xs val))
+}
+@main = @loop(5000 @build(100 #Tail{0}))

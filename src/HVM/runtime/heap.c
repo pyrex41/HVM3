@@ -1,5 +1,6 @@
 #include "Runtime.h"
 #include <string.h>
+#include <strings.h>
 
 // Heap counters
 void set_len(u64 size) { *HVM.size = size; reuse_reset(); }
@@ -71,6 +72,74 @@ static u64  HVM_BUMP_L_BLOCKS = 0;
 static u64  HVM_BUMP_L_CELLS  = 0;
 static int  HVM_TRACE_ON      = -1;         // lazy getenv(HVM_REUSE_TRACE)
 static u64  HVM_TRACE_MARK    = 1ULL << 27; // next size threshold (~1GB)
+
+// Opt-in death-site profiling for compiled mode. This state is deliberately
+// translation-unit-local: a generated .so reports the calls it actually made.
+static int HVM_PROFILE_ON = -1;
+static int HVM_PROFILE_REGISTERED = 0;
+static u64 HVM_PROFILE_FREE_CALLS[PROF_SITE_COUNT];
+static u64 HVM_PROFILE_FREE_CELLS[PROF_SITE_COUNT];
+static u64 HVM_PROFILE_COLLECT_CALLS[PROF_SITE_COUNT];
+static u64 HVM_PROFILE_COLLECT_CELLS[21]; // indexed by stable runtime Tag
+
+static const char* HVM_PROFILE_SITE_NAMES[PROF_SITE_COUNT] = {
+  "tco_ctr_container",
+  "flush_reuse_frame",
+  "flush_reuse_scrutinee",
+  "dropped_arg",
+  "dropped_mat_field",
+  "unused_let",
+  "ref_era",
+  "dup_sup",
+  "tco_reuse_cell",
+};
+
+static const char* HVM_PROFILE_TAG_NAMES[21] = {
+  "DP0", "DP1", "VAR", "SUB", "REF", "LET", "APP", "tag07",
+  "MAT", "IFL", "SWI", "OPX", "OPY", "ERA", "LAM", "SUP",
+  "CTR", "W32", "CHR", "INC", "DEC",
+};
+
+static void profile_report_atexit(void) {
+  fprintf(stderr, "HVM_DEATH_PROFILE version=1\n");
+  for (u64 i = 0; i < PROF_SITE_COUNT; i++) {
+    if (HVM_PROFILE_FREE_CALLS[i] || HVM_PROFILE_COLLECT_CALLS[i]) {
+      fprintf(stderr,
+              "HVM_DEATH_SITE id=%llu name=%s free_calls=%llu collect_calls=%llu reclaimed_cells=%llu\n",
+              (unsigned long long)i, HVM_PROFILE_SITE_NAMES[i],
+              (unsigned long long)HVM_PROFILE_FREE_CALLS[i],
+              (unsigned long long)HVM_PROFILE_COLLECT_CALLS[i],
+              (unsigned long long)HVM_PROFILE_FREE_CELLS[i]);
+    }
+  }
+  for (u64 tag = 0; tag < 21; tag++) {
+    if (HVM_PROFILE_COLLECT_CELLS[tag]) {
+      fprintf(stderr, "HVM_DEATH_COLLECT tag=%llu name=%s reclaimed_cells=%llu\n",
+              (unsigned long long)tag, HVM_PROFILE_TAG_NAMES[tag],
+              (unsigned long long)HVM_PROFILE_COLLECT_CELLS[tag]);
+    }
+  }
+}
+
+static bool profile_enabled(void) {
+  if (HVM_PROFILE_ON < 0) {
+    const char* value = getenv("HVM_DEATH_PROFILE");
+    HVM_PROFILE_ON = value != NULL && value[0] != '\0'
+                  && strcmp(value, "0") != 0
+                  && strcasecmp(value, "false") != 0
+                  && strcasecmp(value, "no") != 0
+                  && strcasecmp(value, "off") != 0;
+    if (HVM_PROFILE_ON && !HVM_PROFILE_REGISTERED) {
+      HVM_PROFILE_REGISTERED = 1;
+      atexit(profile_report_atexit);
+    }
+  }
+  return HVM_PROFILE_ON != 0;
+}
+
+void hvm_profile_init() {
+  (void)profile_enabled();
+}
 
 void hvm_set_reuse(u64 on) {
   HVM_REUSE_ON = on != 0;
@@ -181,6 +250,16 @@ void free_node(Loc loc, Loc arity) {
   if (!HVM_REUSE_ON || arity == 0 || arity >= REUSE_L_MAX) return;
   reuse_push_any(loc, arity);
   HVM_FREED_CELLS += arity;
+}
+
+void free_node_site(ProfileSite site, Loc loc, Loc arity) {
+  if (profile_enabled() && (u64)site < PROF_SITE_COUNT) {
+    HVM_PROFILE_FREE_CALLS[site]++;
+    if (HVM_REUSE_ON && arity > 0 && arity < REUSE_L_MAX) {
+      HVM_PROFILE_FREE_CELLS[site] += arity;
+    }
+  }
+  free_node(loc, arity);
 }
 
 // Diagnostics: per-ctor-label counters for DUP-CTR and MAT-CTR (who is
@@ -295,7 +374,14 @@ static void collect_push(Term t) {
   CLT_BUF[CLT_POS++] = t;
 }
 
-void collect(Term term) {
+static void collect_free(Tag tag, Loc loc, Loc arity) {
+  if (HVM_PROFILE_ON > 0 && tag < 21 && arity > 0 && arity < REUSE_L_MAX) {
+    HVM_PROFILE_COLLECT_CELLS[tag] += arity;
+  }
+  free_node(loc, arity);
+}
+
+static void collect_impl(Term term) {
   if (!HVM_REUSE_ON) return;
   CLT_POS = 0;
   collect_push(term);
@@ -310,7 +396,7 @@ void collect(Term term) {
       case VAR: case DP0: case DP1: {
         Term s = got(loc);
         if (term_get_bit(s) != 0) {
-          free_node(loc, 1);
+          collect_free(tag, loc, 1);
           collect_push(term_rem_bit(s));
         }
         break;
@@ -319,7 +405,7 @@ void collect(Term term) {
         Term bod = got(loc);
         if (term_get_bit(bod) == 0) {
           collect_push(bod);
-          free_node(loc, 1);
+          collect_free(tag, loc, 1);
         }
         break;
       }
@@ -328,41 +414,58 @@ void collect(Term term) {
         if (term_get_bit(val) == 0) {
           collect_push(val);
           collect_push(got(loc + 1));
-          free_node(loc, 2);
+          collect_free(tag, loc, 2);
         }
         break;
       }
       case APP: case SUP: case OPX: case OPY: {
         collect_push(got(loc + 0));
         collect_push(got(loc + 1));
-        free_node(loc, 2);
+        collect_free(tag, loc, 2);
         break;
       }
       case INC: case DEC: {
         collect_push(got(loc + 0));
-        free_node(loc, 1);
+        collect_free(tag, loc, 1);
         break;
       }
       case CTR: {
         u64 ari = HVM.cari[lab];
         for (u64 i = 0; i < ari; i++) collect_push(got(loc + i));
-        free_node(loc, ari);
+        collect_free(tag, loc, ari);
         break;
       }
       case MAT: case IFL: case SWI: {
         u64 len = tag == SWI ? lab : tag == IFL ? 2 : HVM.clen[lab];
         for (u64 i = 0; i <= len; i++) collect_push(got(loc + i));
-        free_node(loc, 1 + len);
+        collect_free(tag, loc, 1 + len);
         break;
       }
       case REF: {
         u64 ari = HVM.fari[lab];
         for (u64 i = 0; i < ari; i++) collect_push(got(loc + i));
-        free_node(loc, ari);
+        collect_free(tag, loc, ari);
         break;
       }
       default: break; // SUB or unknown: leave untouched
     }
+  }
+}
+
+void collect(Term term) {
+  collect_impl(term);
+}
+
+void collect_site(ProfileSite site, Term term) {
+  bool profiling = profile_enabled();
+  if (profiling && (u64)site < PROF_SITE_COUNT) {
+    HVM_PROFILE_COLLECT_CALLS[site]++;
+  }
+  if (!HVM_REUSE_ON) return;
+  u64 before = HVM_FREED_CELLS;
+  collect_impl(term);
+  if (profiling && (u64)site < PROF_SITE_COUNT) {
+    HVM_PROFILE_FREE_CELLS[site] += HVM_FREED_CELLS - before;
   }
 }
 

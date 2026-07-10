@@ -1,0 +1,5 @@
+data P { #P{a b} }
+@drop(x) = 0
+@sum(p) = ~p { #P{a b}: (+ a b) }
+@inner = !&1{a b}=#P{20 22} a
+@main = !&0{x y}=@inner (+ @drop(x) @sum(y))

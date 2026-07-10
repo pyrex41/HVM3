@@ -1,0 +1,28 @@
+data A { #Tail{v} #Bind{k v next} }
+data C { #Closure{env} }
+data W { #World{modules} }
+@build(n tail) = ~n !tail {
+  0: tail
+  1+p: @build(p #Bind{1 2 tail})
+}
+@deep(xs) = ~xs {
+  #Tail{v}: v
+  #Bind{k v next}: @deep(next)
+}
+@resolve(world arg) = ~world !arg {
+  #World{modules}: !&0{module_read module_keep}=modules
+    !module = @deep(module_read)
+    !&1{function_read function_keep}=module
+    !env = @deep(function_read)
+    #Closure{(+ env arg)}
+}
+@apply(closure) = ~closure { #Closure{env}: env }
+@loop(n world acc) = ~n !world !acc {
+  0: acc
+  1+p: !&0{next arg}=p
+       !&1{call_world keep_world}=world
+       @loop(next keep_world (+ acc @apply(@resolve(call_world arg))))
+}
+@functions = @build(20 #Tail{3})
+@modules = @build(20 #Tail{@functions})
+@main = @loop(5000 #World{@modules} 0)

@@ -362,7 +362,7 @@ compileFast book fid core copy args = do
         Just labs -> do
           emit $ "if (term_tag(" ++ argNam ++ ") == ERA) {"
           emit $ "  itrs += 1;"
-          emit $ "  collect(ref);"
+          emit $ "  collect_site(PROF_REF_ERA, ref);"
           emit $ "  *HVM.itrs += itrs;"
           emit $ "  return term_new(ERA, 0, 0);"
           emit $ "}"
@@ -387,7 +387,7 @@ compileFast book fid core copy args = do
     -- (the erased/unused arg) -- collect it recursively. Disjoint from the
     -- frame-cell free (flushReuse frees the term_loc(ref) block, not what its
     -- slots point at), so no double-free. TCO iters 2+ are not covered here.
-    when (coreCount arg core == 0) $ emit $ "collect(" ++ argNam ++ ");"
+    when (coreCount arg core == 0) $ emit $ "collect_site(PROF_DROPPED_ARG, " ++ argNam ++ ");"
     return argNam
   reuse (length (snd (fst (mget (fidToFun book) fid)))) "term_loc(ref)"
   compileFastArgs book fid core args
@@ -489,12 +489,12 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
         return (fd, fdNam)
       tcoNow <- gets tco
       if tcoNow && length fds > 0
-        then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
+        then emit $ "free_node_site(PROF_TCO_CTR_CONTAINER, term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
         else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
       -- S2: collect fields the branch drops (used zero times).
       forM_ fdNams $ \(fd, fdNam) ->
         when (coreCount fd bod + sum [ coreCount fd mv | (_, mv) <- mov ] == 0) $
-          emit $ "collect(" ++ fdNam ++ ");"
+          emit $ "collect_site(PROF_DROPPED_MAT_FIELD, " ++ fdNam ++ ");"
       forM_ mov $ \(key, val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -557,13 +557,13 @@ compileFastBody book fid term@(Mat kin val mov css) ctx stop@False itr = do
       -- non-TCO the allocation always runs, so direct reuse is kept.
       tcoNow <- gets tco
       if tcoNow && length fds > 0
-        then emit $ "free_node(term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
+        then emit $ "free_node_site(PROF_TCO_CTR_CONTAINER, term_loc(" ++ valNam ++ "), " ++ show (length fds) ++ ");"
         else reuse (length fds) ("term_loc(" ++ valNam ++ ")")
       -- S2: a field the branch uses ZERO times names a dropped subtree
       -- (e.g. the old value kl.aset replaces) -- collect it recursively.
       forM_ fdNams $ \(fd, fdNam) ->
         when (coreCount fd bod + sum [ coreCount fd mv | (_, mv) <- mov ] == 0) $
-          emit $ "collect(" ++ fdNam ++ ");"
+          emit $ "collect_site(PROF_DROPPED_MAT_FIELD, " ++ fdNam ++ ");"
       forM_ mov $ \ (key,val) -> do
         valT <- compileFastCore book fid val
         bind key valT
@@ -614,7 +614,7 @@ compileFastBody book fid term@(Dup lab dp0 dp1 val bod) ctx stop itr = do
   emit $ "itrs += 1;"
   emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
   emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
-  emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
+  emit $ "free_node_site(PROF_DUP_SUP, term_loc(" ++ valNam ++ "), 2);"
   tabDec
   emit $ "} else {"
   tabInc
@@ -645,7 +645,7 @@ compileFastBody book fid term@(Let mode var val bod) ctx stop itr = do
   case mode of
     LAZY -> do
       bind var valT
-      when (coreCount var bod == 0 && allocating) $ emit $ "collect(" ++ valT ++ ");"
+      when (coreCount var bod == 0 && allocating) $ emit $ "collect_site(PROF_UNUSED_LET, " ++ valT ++ ");"
     STRI -> do
       case val of
         t@(Ref _ rFid _) -> do
@@ -655,12 +655,12 @@ compileFastBody book fid term@(Let mode var val bod) ctx stop itr = do
               ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ ")) : reduce("
               ++ mget (fidToNam book) rFid ++ "_f(" ++ valT ++ "));"
           bind var valNam
-          when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
+          when (coreCount var bod == 0) $ emit $ "collect_site(PROF_UNUSED_LET, " ++ valNam ++ ");"
         _ -> do
           valNam <- fresh "val"
           emit $ "Term " ++ valNam ++ " = reuse_enabled() ? reduce_owned(" ++ valT ++ ") : reduce(" ++ valT ++ ");"
           bind var valNam
-          when (coreCount var bod == 0) $ emit $ "collect(" ++ valNam ++ ");"
+          when (coreCount var bod == 0) $ emit $ "collect_site(PROF_UNUSED_LET, " ++ valNam ++ ");"
   compileFastBody book fid bod ctx stop itr
 
 compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
@@ -712,7 +712,7 @@ compileFastBody book fid term@(Ref fNam fFid fArg) ctx stop itr
     emit $ "itrs += 1;"
     emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
     emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
-    emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
+    emit $ "free_node_site(PROF_DUP_SUP, term_loc(" ++ valNam ++ "), 2);"
     tabDec
     emit $ "} else {"
     tabInc
@@ -770,7 +770,7 @@ compileFastAlloc name arity = do
           emit $ "  " ++ name ++ " = alloc_node(" ++ show arity ++ ");"
           -- On iterations 2+ this reuse loc is NOT taken (alloc_node above), so
           -- the cell it names is dead and must enter the global pool.
-          emit $ "  free_node(" ++ loc ++ ", " ++ show arity ++ ");"
+          emit $ "  free_node_site(PROF_TCO_REUSE_CELL, " ++ loc ++ ", " ++ show arity ++ ");"
           emit $ "}"
       else do
         emit $ name ++ " = " ++ loc ++ ";"
@@ -829,8 +829,11 @@ flushReuse protect = do
   kept <- foldM (\acc (arity, locs) -> do
             let skip = filter keep locs
             let free = filter (not . keep) locs
-            forM_ free $ \loc ->
-              emit $ "free_node(" ++ loc ++ ", " ++ show arity ++ ");"
+            forM_ free $ \loc -> do
+              let site = if "term_loc(ref)" `isPrefixOf` loc
+                         then "PROF_FLUSH_REUSE_FRAME"
+                         else "PROF_FLUSH_REUSE_SCRUTINEE"
+              emit $ "free_node_site(" ++ site ++ ", " ++ loc ++ ", " ++ show arity ++ ");"
             return (if null skip then acc else MS.insert arity skip acc))
           MS.empty (MS.toList reuse)
   modify $ \st -> st { reus = kept }
@@ -906,7 +909,7 @@ compileFastCore book fid (Dup lab dp0 dp1 val bod) = do
   emit $ "itrs += 1;"
   emit $ dp0Nam ++ " = got(term_loc(" ++ valNam ++ ") + 0);"
   emit $ dp1Nam ++ " = got(term_loc(" ++ valNam ++ ") + 1);"
-  emit $ "free_node(term_loc(" ++ valNam ++ "), 2);"
+  emit $ "free_node_site(PROF_DUP_SUP, term_loc(" ++ valNam ++ "), 2);"
   tabDec
   emit $ "} else {"
   tabInc

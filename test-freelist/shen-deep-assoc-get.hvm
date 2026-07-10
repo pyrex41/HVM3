@@ -1,0 +1,15 @@
+data A { #End{v} #Bind{k v next} }
+@build(n tail) = ~n !tail {
+  0: tail
+  1+p: @build(p #Bind{1 2 tail})
+}
+@deep(xs) = ~xs {
+  #End{v}: v
+  #Bind{k v next}: @deep(next)
+}
+@loop(n world acc) = ~n !world !acc {
+  0: acc
+  1+p: !&0{probe keep}=world
+       @loop(p keep (+ acc @deep(probe)))
+}
+@main = @loop(5000 @build(100 #End{7}) 0)

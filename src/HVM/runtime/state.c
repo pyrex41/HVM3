@@ -47,6 +47,7 @@ void hvm_set_state(State* hvm) {
               && strcasecmp(reuse, "no") != 0
               && strcasecmp(reuse, "off") != 0;
   hvm_set_reuse(enabled);
+  hvm_profile_init();
 }
 
 void hvm_define(u16 fid, Term (*func)()) {

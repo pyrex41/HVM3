@@ -1,0 +1,22 @@
+data V { #Vec{a b c d} }
+data S { #Slot{key value} }
+@update(inner val) = ~inner !val {
+  #Vec{a b c old}: #Vec{a b c #Slot{3 val}}
+}
+@outer(vec val) = ~vec !val {
+  #Vec{a b inner d}: #Vec{a b @update(inner val) d}
+}
+@read(vec) = ~vec {
+  #Vec{a b inner d}: ~inner {
+    #Vec{e f g slot}: ~slot {
+      #Slot{key value}: value
+    }
+  }
+}
+@loop(n vec) = ~n !vec {
+  0: @read(vec)
+  1+p: !&0{next val}=p
+       @loop(next @outer(vec val))
+}
+@inner = #Vec{#Slot{0 10} #Slot{1 11} #Slot{2 12} #Slot{3 13}}
+@main = @loop(10000 #Vec{#Slot{0 0} #Slot{1 1} @inner #Slot{3 3}})

@@ -121,7 +121,6 @@ Term term_set_bit(Term term);
 Term term_rem_bit(Term term);
 Term term_set_loc(Term x, Loc loc);
 _Bool term_is_atom(Term term);
-
 // Heap read/write
 Term swap(Loc loc, Term term);
 Term got(Loc loc);
@@ -134,11 +133,28 @@ Loc  alloc_node(Loc arity);
 void inc_itr();
 
 // Node reuse (freelist)
+// Stable profiling site IDs. Append-only: report consumers may key on these.
+typedef enum {
+  PROF_TCO_CTR_CONTAINER = 0,
+  PROF_FLUSH_REUSE_FRAME,
+  PROF_FLUSH_REUSE_SCRUTINEE,
+  PROF_DROPPED_ARG,
+  PROF_DROPPED_MAT_FIELD,
+  PROF_UNUSED_LET,
+  PROF_REF_ERA,
+  PROF_DUP_SUP,
+  PROF_TCO_REUSE_CELL,
+  PROF_SITE_COUNT
+} ProfileSite;
+
 void hvm_set_reuse(u64 on);
 bool reuse_enabled();
+void hvm_profile_init();
 void reuse_reset();
 void free_node(Loc loc, Loc arity);
+void free_node_site(ProfileSite site, Loc loc, Loc arity);
 void collect(Term term);
+void collect_site(ProfileSite site, Term term);
 void collect_at(Loc loc);
 u64  get_frees();
 u64  get_reuses();
